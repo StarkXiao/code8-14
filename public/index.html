@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>海底光缆施工与渔船避让协同系统</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚓</span>
+      <div>
+        <h1>海底光缆施工 × 渔船避让协同系统</h1>
+        <p class="subtitle">施工窗口与渔船作业区空间叠加 · 时空冲突检测 · 双向预警</p>
+      </div>
+    </div>
+    <div class="clockbox">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="clockmeta">
+        <span id="elapsed">仿真推演 0 分钟</span>
+        <div class="speedctl">
+          <button data-x="15">15×</button>
+          <button data-x="60" class="on">60×</button>
+          <button data-x="300">300×</button>
+          <button data-x="900">900×</button>
+          <button id="btnReset" class="reset">↺ 重置</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="stats" id="stats">
+        <div class="stat danger"><b id="cntDanger">0</b><span>严重冲突</span></div>
+        <div class="stat warn"><b id="cntWarn">0</b><span>接近预警</span></div>
+        <div class="stat safe"><b id="cntBoats">0</b><span>监控渔船</span></div>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab on" data-tab="alerts">冲突预警</button>
+        <button class="tab" data-tab="events">预警记录</button>
+        <button class="tab" data-tab="timeline">时间轴</button>
+      </nav>
+
+      <section class="panel" id="panel-alerts">
+        <div id="alertList" class="cards"></div>
+      </section>
+      <section class="panel hidden" id="panel-events">
+        <div id="eventList" class="cards"></div>
+      </section>
+      <section class="panel hidden" id="panel-timeline">
+        <div id="timelineBox"></div>
+        <p class="hint">横轴为当日 02:00–20:00，彩色条带为施工窗口（实线）与渔船作业窗口（虚线），红色段为重叠冲突期。</p>
+      </section>
+    </aside>
+
+    <section class="mapwrap">
+      <div id="map"></div>
+      <div class="legend">
+        <h3>图例</h3>
+        <div><span class="sw corridor"></span>施工安全廊道（单侧 500m）</div>
+        <div><span class="ln cable"></span>光缆设计路由</div>
+        <div><span class="sw z-safe"></span>作业区·安全</div>
+        <div><span class="sw z-warn"></span>作业区·临近预警</div>
+        <div><span class="sw z-danger"></span>作业区·冲突</div>
+        <div><span class="mk fish">▲</span>渔船</div>
+        <div><span class="mk work">◆</span>施工船</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
