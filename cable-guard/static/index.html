@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>海底光缆施工 · 渔船避让协同系统</title>
+<style>
+  :root{
+    --bg:#0b1c2c; --panel:#10273c; --panel2:#0d2235; --line:#1e3f5c;
+    --txt:#dcecf7; --dim:#7fa3bd; --red:#ff4d4f; --orange:#fa8c16;
+    --yellow:#fadb14; --blue:#3fa9f5; --green:#52c41a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font:14px/1.5 "PingFang SC","Microsoft YaHei",sans-serif;
+       display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:18px;padding:8px 16px;background:var(--panel);
+         border-bottom:1px solid var(--line)}
+  header h1{font-size:17px;white-space:nowrap}
+  .stat{padding:2px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);
+        font-size:13px;color:var(--dim);white-space:nowrap}
+  .stat b{color:var(--txt);font-size:16px;margin-right:4px}
+  .stat.red b{color:var(--red)} .stat.orange b{color:var(--orange)} .stat.yellow b{color:var(--yellow)}
+  #main{flex:1;display:flex;min-height:0}
+  #mapWrap{flex:1;position:relative;background:#081626}
+  #map{position:absolute;inset:0;width:100%;height:100%}
+  #side{width:400px;min-width:400px;display:flex;flex-direction:column;background:var(--panel);
+        border-left:1px solid var(--line)}
+  .secTitle{padding:8px 12px;font-weight:600;border-bottom:1px solid var(--line);
+            background:var(--panel2);display:flex;justify-content:space-between;align-items:center}
+  #conflicts{max-height:38%;overflow-y:auto;border-bottom:1px solid var(--line)}
+  #alerts{flex:1;overflow-y:auto}
+  .card{margin:8px 10px;padding:8px 10px;border-radius:6px;background:var(--panel2);
+        border-left:4px solid var(--dim);cursor:pointer}
+  .card.red{border-left-color:var(--red)} .card.orange{border-left-color:var(--orange)}
+  .card.yellow{border-left-color:var(--yellow)}
+  .card.sel{outline:2px solid #fff3}
+  .card .t{font-weight:600;margin-bottom:2px}
+  .card .m{font-size:12.5px;color:var(--dim)}
+  .tag{display:inline-block;padding:0 6px;border-radius:4px;font-size:11px;margin-right:6px;color:#06121f}
+  .tag.red{background:var(--red)} .tag.orange{background:var(--orange)} .tag.yellow{background:var(--yellow)}
+  .tag.sideC{background:var(--blue)} .tag.sideF{background:var(--green)}
+  #tl{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--panel);
+      border-top:1px solid var(--line)}
+  #tl input[type=range]{flex:1}
+  #simTime{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--yellow)}
+  button{background:var(--blue);border:0;color:#fff;padding:5px 14px;border-radius:5px;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+  #legend{position:absolute;left:10px;top:10px;background:#0b1c2ccc;padding:8px 12px;border-radius:6px;
+          font-size:12px;color:var(--dim);border:1px solid var(--line)}
+  #legend i{display:inline-block;width:14px;height:8px;margin-right:6px;border-radius:2px;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌊 海底光缆施工 · 渔船避让协同系统</h1>
+  <div class="stat">冲突总数<b id="sTotal">-</b></div>
+  <div class="stat red">紧急<b id="sRed">-</b></div>
+  <div class="stat orange">警告<b id="sOrange">-</b></div>
+  <div class="stat yellow">提示<b id="sYellow">-</b></div>
+  <div class="stat" id="sNext">最近冲突: -</div>
+  <div class="stat" id="sDanger">缓冲带内船舶: -</div>
+</header>
+<div id="main">
+  <div id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="legend">
+      <div><i style="background:#ff4d4f"></i>施工窗口(红=在施/橙=计划)</div>
+      <div><i style="background:#ff4d4f33;border:1px dashed #ff4d4f"></i>安全缓冲带</div>
+      <div><i style="background:#3fa9f5"></i>渔船作业区</div>
+      <div><i style="background:#52c41a"></i>渔船(AIS) ▲红=闯入缓冲带</div>
+      <div><i style="background:#8c8c8c"></i>海缆全路由</div>
+    </div>
+  </div>
+  <div id="side">
+    <div class="secTitle">⚠ 时空冲突列表 <button class="ghost" id="btnWhatIf">＋what-if 推演</button></div>
+    <div id="conflicts"></div>
+    <div class="secTitle">📢 双向预警信息(施工侧 / 渔业侧)</div>
+    <div id="alerts"></div>
+  </div>
+</div>
+<div id="tl">
+  <button id="btnPlay">▶ 播放</button>
+  <input type="range" id="timeSlider" min="0" max="120" step="0.5" value="0">
+  <span id="simTime">--</span>
+  <span style="color:var(--dim)">时间轴: 拖动复盘/预演任意时刻态势</span>
+</div>
+<script>
+let DATA=null, simTime=null, tMin=null, tMax=null, selConflict=null, playing=false, playTimer=null;
+const cv=document.getElementById('map'), ctx=cv.getContext('2d');
+const KM_LAT=110.94, KM_LON=111.32;
+const LEVEL_C={red:'#ff4d4f',orange:'#fa8c16',yellow:'#fadb14'};
+
+const parse=s=>new Date(s);
+const fmt=d=>`${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+const fmtT=s=>fmt(parse(s));
+
+/* ---------- 投影 ---------- */
+let P={};
+function fitView(){
+  const pts=[...DATA.cable_route];
+  DATA.zones.forEach(z=>(z.shape==='circle'?[z.center]:z.polygon).forEach(p=>pts.push(p)));
+  DATA.vessels.forEach(v=>pts.push([v.lon,v.lat]));
+  const lons=pts.map(p=>p[0]),lats=pts.map(p=>p[1]);
+  const mLon=(Math.max(...lons)-Math.min(...lons))*0.10, mLat=(Math.max(...lats)-Math.min(...lats))*0.10;
+  P.minLon=Math.min(...lons)-mLon; P.maxLon=Math.max(...lons)+mLon;
+  P.minLat=Math.min(...lats)-mLat; P.maxLat=Math.max(...lats)+mLat;
+  P.lat0=(P.minLat+P.maxLat)/2;
+}
+function proj(lon,lat){
+  const W=cv.width,H=cv.height;
+  const sx=W/((P.maxLon-P.minLon)*KM_LON*Math.cos(P.lat0*Math.PI/180));
+  const sy=H/((P.maxLat-P.minLat)*KM_LAT);
+  const s=Math.min(sx,sy);
+  const wKm=(P.maxLon-P.minLon)*KM_LON*Math.cos(P.lat0*Math.PI/180), hKm=(P.maxLat-P.minLat)*KM_LAT;
+  P.ox=(W-s*wKm)/2; P.oy=(H-s*hKm)/2; P.s=s;
+  return [P.ox+(lon-P.minLon)*KM_LON*Math.cos(P.lat0*Math.PI/180)*s,
+          H-(P.oy+(lat-P.minLat)*KM_LAT*s)];
+}
+const kmPx=k=>k*P.s;
+const active=(o,t)=>parse(o.start)<=t&&t<=parse(o.end);
+
+/* ---------- 绘制 ---------- */
+function draw(){
+  const W=cv.width=cv.clientWidth*devicePixelRatio, H=cv.height=cv.clientHeight*devicePixelRatio;
+  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,W,H);
+  // 经纬网格
+  ctx.strokeStyle='#14304a'; ctx.fillStyle='#4d728f'; ctx.font=`${11*devicePixelRatio}px sans-serif`;
+  for(let lon=Math.ceil(P.minLon*4)/4;lon<=P.maxLon;lon+=0.25){
+    const[x]=proj(lon,P.minLat); ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+    ctx.fillText(lon.toFixed(2)+'°E',x+3,H-6*devicePixelRatio);}
+  for(let lat=Math.ceil(P.minLat*4)/4;lat<=P.maxLat;lat+=0.25){
+    const[,y]=proj(P.minLon,lat); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+    ctx.fillText(lat.toFixed(2)+'°N',4*devicePixelRatio,y-3);}
+  // 海缆全路由
+  ctx.setLineDash([6,6]); ctx.strokeStyle='#8c8c8c'; ctx.lineWidth=2*devicePixelRatio;
+  path(DATA.cable_route); ctx.stroke(); ctx.setLineDash([]);
+  label(DATA.cable_route[0],'登陆点','#8c8c8c'); label(DATA.cable_route.at(-1),'海上风场','#8c8c8c');
+  // 渔区
+  DATA.zones.forEach(z=>{
+    const inConf=DATA.conflicts.some(c=>c.zone_id===z.id);
+    const act=active(z,simTime);
+    ctx.fillStyle=act?'#3fa9f52e':'#3fa9f518';
+    ctx.strokeStyle=inConf?'#fa8c16':'#3fa9f5'; ctx.lineWidth=(inConf?2.5:1.5)*devicePixelRatio;
+    if(z.shape==='circle'){const[cx,cy]=proj(...z.center);ctx.beginPath();
+      ctx.arc(cx,cy,kmPx(z.radius_km),0,7);ctx.fill();ctx.stroke();}
+    else{ctx.beginPath();z.polygon.forEach((p,i)=>{const[x,y]=proj(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+      ctx.closePath();ctx.fill();ctx.stroke();}
+    const c=z.shape==='circle'?z.center:z.polygon[0];
+    label(c,`${z.name}(${z.vessel_count}艘)`,inConf?'#fa8c16':'#3fa9f5');
+  });
+  // 施工窗口(缓冲带+路径)
+  DATA.windows.forEach(w=>{
+    const act=active(w,simTime), past=parse(w.end)<simTime;
+    const col=past?'#5a6b7a':(act?'#ff4d4f':'#fa8c16');
+    ctx.lineCap='round';ctx.lineJoin='round';
+    ctx.strokeStyle=act?'#ff4d4f2b':'#fa8c161f'; ctx.lineWidth=kmPx(w.buffer_km*2);
+    path(w.path);ctx.stroke();
+    ctx.strokeStyle=col;ctx.lineWidth=(act?4:3)*devicePixelRatio;
+    if(selConflict&&selConflict.window_id===w.id){ctx.shadowColor='#fff';ctx.shadowBlur=14*devicePixelRatio;}
+    path(w.path);ctx.stroke();ctx.shadowBlur=0;
+    label(w.path[Math.floor(w.path.length/2)],`${w.name}·${w.vessel}`,col);
+  });
+  // 船舶(AIS 匀速外推)
+  DATA.vessels.forEach(v=>{
+    const dt=(simTime-parse(v.timestamp))/36e5, d=v.speed_kn*1.852*dt, brg=v.course_deg*Math.PI/180;
+    const lat=v.lat+d*Math.cos(brg)/KM_LAT, lon=v.lon+d*Math.sin(brg)/(KM_LON*Math.cos(v.lat*Math.PI/180));
+    const[x,y]=proj(lon,lat);
+    const danger=inDanger(lon,lat);
+    ctx.save();ctx.translate(x,y);ctx.rotate(brg);
+    ctx.fillStyle=danger?'#ff4d4f':(v.escort?'#c084fc':'#52c41a');
+    const s=6*devicePixelRatio;
+    ctx.beginPath();ctx.moveTo(0,-s);ctx.lineTo(s*0.7,s);ctx.lineTo(-s*0.7,s);ctx.closePath();ctx.fill();
+    ctx.restore();
+    ctx.fillStyle=danger?'#ff4d4f':'#9fbfd4';ctx.font=`${10*devicePixelRatio}px sans-serif`;
+    ctx.fillText(v.name,x+8*devicePixelRatio,y+3);
+  });
+  // 当前时刻水印
+  ctx.fillStyle='#fadb14';ctx.font=`bold ${13*devicePixelRatio}px sans-serif`;
+  ctx.fillText('态势时刻 '+fmt(simTime),cv.width-180*devicePixelRatio,20*devicePixelRatio);
+}
+function path(pts){ctx.beginPath();pts.forEach((p,i)=>{const[x,y]=proj(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});}
+function label(p,txt,col){const[x,y]=proj(...p);ctx.fillStyle=col;ctx.font=`${11*devicePixelRatio}px sans-serif`;
+  ctx.fillText(txt,x+5*devicePixelRatio,y-5*devicePixelRatio);}
+function inDanger(lon,lat){
+  return DATA.windows.some(w=>active(w,simTime)&&w.path.some((p,i)=>{
+    if(i===w.path.length-1)return false;
+    const[x1,y1]=proj(...p),[x2,y2]=proj(w.path[i+1]),[px,py]=proj(lon,lat);
+    const dx=x2-x1,dy=y2-y1,L2=dx*dx+dy*dy||1;
+    const t=Math.max(0,Math.min(1,((px-x1)*dx+(py-y1)*dy)/L2));
+    return Math.hypot(px-(x1+t*dx),py-(y1+t*dy))<=kmPx(w.buffer_km);}));
+}
+
+/* ---------- 面板 ---------- */
+function renderPanels(){
+  const cs=DATA.conflicts;
+  sTotal.textContent=cs.length;
+  sRed.textContent=cs.filter(c=>c.level==='red').length;
+  sOrange.textContent=cs.filter(c=>c.level==='orange').length;
+  sYellow.textContent=cs.filter(c=>c.level==='yellow').length;
+  const next=cs.find(c=>c.lead_hours>0);
+  sNext.textContent='最近冲突: '+(next?`${fmtT(next.overlap_start)} (提前${next.lead_hours.toFixed(0)}h)`:'无');
+  sDanger.textContent='缓冲带内船舶: '+DATA.vessels.filter(v=>{
+    const dt=(simTime-parse(v.timestamp))/36e5,d=v.speed_kn*1.852*dt,b=v.course_deg*Math.PI/180;
+    return inDanger(v.lon+d*Math.sin(b)/(KM_LON*Math.cos(v.lat*Math.PI/180)),v.lat+d*Math.cos(b)/KM_LAT);}).length+' 艘';
+  conflicts.innerHTML=cs.length?cs.map(c=>`
+    <div class="card ${c.level} ${selConflict&&selConflict.id===c.id?'sel':''}" data-id="${c.id}">
+      <div class="t"><span class="tag ${c.level}">${c.level_name}</span>${c.id} ${c.window_name} × ${c.zone_name}</div>
+      <div class="m">重叠时段 ${fmtT(c.overlap_start)} ~ ${fmtT(c.overlap_end)} (${c.overlap_hours}h)<br>
+      最近距离 ${c.distance_km}km / 缓冲 ${c.buffer_km}km · 涉及 ${c.vessel_count} 艘渔船 · ${c.lead_hours<0?'进行中':'提前'+c.lead_hours.toFixed(0)+'h预警'}</div>
+    </div>`).join(''):'<div class="card"><div class="m">✅ 当前无时空冲突</div></div>';
+  document.querySelectorAll('#conflicts .card[data-id]').forEach(el=>el.onclick=()=>{
+    selConflict=DATA.conflicts.find(c=>c.id===el.dataset.id);renderPanels();draw();});
+  alerts.innerHTML=DATA.alerts.map(a=>`
+    <div class="card ${a.level}">
+      <div class="t"><span class="tag ${a.side==='construction'?'sideC':'sideF'}">${a.side==='construction'?'施工侧':'渔业侧'}</span>
+      <span class="tag ${a.level}">${a.level_name}</span>${a.to}</div>
+      <div class="m">${a.message}</div>
+    </div>`).join('');
+}
+
+/* ---------- 时间轴 ---------- */
+function setSim(t){
+  simTime=t;
+  timeSlider.value=(t-tMin)/36e5;
+  simTime.textContent=fmt(t);
+  renderPanels();draw();
+}
+btnPlay.onclick=()=>{
+  playing=!playing;btnPlay.textContent=playing?'⏸ 暂停':'▶ 播放';
+  if(playing)playTimer=setInterval(()=>{
+    const t=new Date(simTime.getTime()+36e5);
+    if(t>tMax){playing=false;btnPlay.textContent='▶ 播放';clearInterval(playTimer);return;}
+    setSim(t);},400);
+  else clearInterval(playTimer);
+};
+timeSlider.oninput=()=>setSim(new Date(tMin.getTime()+timeSlider.value*36e5));
+btnWhatIf.onclick=async()=>{
+  // what-if: 临时插入一个与南侧围网区重叠的抢修窗口, 验证系统即时重算
+  const t0=new Date(Date.now()+12*36e5),t1=new Date(Date.now()+36*36e5);
+  const w={id:'WX',name:'应急抢修窗口(what-if)',vessel:'启帆9',activity:'故障点打捞维修',
+    contractor:'某海缆工程公司',path:[[122.28,29.66],[122.42,29.78]],buffer_km:2,
+    start:t0.toISOString().slice(0,16),end:t1.toISOString().slice(0,16)};
+  const r=await(await fetch('/api/windows',{method:'POST',body:JSON.stringify(w)})).json();
+  if(r.ok){const ov=await(await fetch('/api/overview')).json();
+    DATA.conflicts=ov.conflicts;DATA.alerts=ov.alerts;DATA.windows=ov.windows;
+    renderPanels();draw();}
+  else alert('推演失败: '+r.error);
+};
+window.onresize=draw;
+
+/* ---------- 启动 ---------- */
+(async()=>{
+  DATA=await(await fetch('/api/overview')).json();
+  fitView();
+  const times=[...DATA.windows,...DATA.zones].flatMap(o=>[parse(o.start),parse(o.end)]);
+  tMin=new Date(Math.min(...times)); tMax=new Date(Math.max(...times));
+  timeSlider.max=(tMax-tMin)/36e5;
+  setSim(parse(DATA.now));
+})();
+</script>
+</body>
+</html>
